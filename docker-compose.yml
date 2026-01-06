@@ -1,0 +1,58 @@
+services:
+  # =============================================================================
+  # REDIS SERVICE
+  # High-performance in-memory data store used for:
+  # - Stock counter storage
+  # - Distributed locking mechanism
+  # =============================================================================
+  redis:
+    image: redis:7-alpine
+    container_name: flash-sale-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - flash-sale-network
+
+  # =============================================================================
+  # FASTAPI APPLICATION SERVICE
+  # Python web server exposing purchase endpoints
+  # =============================================================================
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: flash-sale-app
+    ports:
+      - "8000:8000"
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - INITIAL_STOCK=50
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./app:/app
+    networks:
+      - flash-sale-network
+
+# =============================================================================
+# PERSISTENT VOLUMES
+# =============================================================================
+volumes:
+  redis_data:
+
+# =============================================================================
+# NETWORK CONFIGURATION
+# =============================================================================
+networks:
+  flash-sale-network:
+    driver: bridge
