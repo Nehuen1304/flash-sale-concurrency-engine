@@ -1,10 +1,54 @@
+# =============================================================================
+# PRODUCTION DOCKER COMPOSE - AWS ElastiCache Configuration
+# =============================================================================
+# This configuration mirrors the AWS production environment:
+# - App container connects to external Redis (ElastiCache in production)
+# - Health checks configured for ALB target group registration
+# - Environment variables for AWS service discovery
+# =============================================================================
+
 services:
-  # =============================================================================
-  # REDIS SERVICE
-  # High-performance in-memory data store used for:
-  # - Stock counter storage
-  # - Distributed locking mechanism
-  # =============================================================================
+  # ---------------------------------------------------------------------------
+  # FASTAPI APPLICATION
+  # Deployed on EC2 instances behind Application Load Balancer
+  # ---------------------------------------------------------------------------
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    image: flash-sale-engine:latest
+    container_name: flash-sale-app
+    ports:
+      - "8000:8000"
+    environment:
+      # In AWS: Set via ECS Task Definition or EC2 User Data
+      - REDIS_HOST=${REDIS_HOST:-redis}
+      - REDIS_PORT=${REDIS_PORT:-6379}
+      - INITIAL_STOCK=${INITIAL_STOCK:-50}
+      - ENVIRONMENT=${ENVIRONMENT:-production}
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8000/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - flash-sale-network
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+
+  # ---------------------------------------------------------------------------
+  # REDIS (Local Development Only)
+  # In production, this is replaced by AWS ElastiCache
+  # ---------------------------------------------------------------------------
   redis:
     image: redis:7-alpine
     container_name: flash-sale-redis
@@ -12,47 +56,25 @@ services:
       - "6379:6379"
     volumes:
       - redis_data:/data
-    command: redis-server --appendonly yes
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 5s
       timeout: 3s
       retries: 5
+    restart: unless-stopped
     networks:
       - flash-sale-network
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
 
-  # =============================================================================
-  # FASTAPI APPLICATION SERVICE
-  # Python web server exposing purchase endpoints
-  # =============================================================================
-  app:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: flash-sale-app
-    ports:
-      - "8000:8000"
-    environment:
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - INITIAL_STOCK=50
-    depends_on:
-      redis:
-        condition: service_healthy
-    volumes:
-      - ./app:/app
-    networks:
-      - flash-sale-network
-
-# =============================================================================
-# PERSISTENT VOLUMES
-# =============================================================================
 volumes:
   redis_data:
+    driver: local
 
-# =============================================================================
-# NETWORK CONFIGURATION
-# =============================================================================
 networks:
   flash-sale-network:
     driver: bridge
